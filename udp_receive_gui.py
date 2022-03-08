@@ -14,13 +14,18 @@ if os.name == 'nt':
 import socket
 from time import sleep
 from wakeup import calc, interpret
-from errors import EmptyBufferError
+from errors import EmptyBufferError, PortInUseError
+
+from assets import SPLASH_GIF
 
 __version__ = '1.6.1'
 
 WIN_TITLE = f'Broadcast SniffLer (v{__version__})'
 
 numerical = None
+
+
+
 
 
 class ArgParser(ArgumentParser):
@@ -121,6 +126,8 @@ if len(missing) >= 1:
 import PySimpleGUI as psg
 import pyperclip as cb
 
+div_offset = 3
+
 muted = args.mute
 copy_on_exit = args.copy_on_exit
 
@@ -142,7 +149,7 @@ def get_win_layout():
     Returns the layout object for our PySimpleGUI window
     Returns
     -------
-    layout : list
+    layout : iterable
         A list that will act as our layout plot for our window.
     """
     global muted, copy_on_exit
@@ -156,7 +163,7 @@ def get_win_layout():
         [
             psg.Multiline(
                 'Starting output\n\n\n',
-                size=(100, 50),
+                size=(50, 25),
                 key='MULTILINE',
                 reroute_cprint=True,
                 reroute_stdout=True,
@@ -164,6 +171,9 @@ def get_win_layout():
                 auto_refresh=True,
 
             )
+        ],
+        [
+            psg.HSeparator()
         ],
         [
             psg.Checkbox(
@@ -193,6 +203,20 @@ def get_win_layout():
 
 
 def udp_init(host='', port=5005):
+    """
+
+    Initialize the socket to listen on the indicated port at the indicated host.
+
+    Args:
+        host:
+            The host to bind our socket to
+        port:
+            The port our socket should be listening on.
+
+    Returns:
+        None
+
+    """
     sock.bind((host, port))
     # optional: set host to this computer's IP address
 
@@ -225,15 +249,40 @@ def beep():
 
 
 def wrap_message(message: str):
+    """
+
+    Returns a formatted output message which boxes off each separate entry received.
+
+    Args:
+        message:
+            The message you want wrapped.
+
+    Returns:
+        The message passed as an argument, but wrapped in a type of text-container.
+
+    """
+    global div_offset
+
+    # Set-up a divider
     _div = str('-' * 25)
+
+    # Set up our string to return
     wrapped = ''
+
+    # Add top divider.
     wrapped += f"{_div}\n"
+
+    # Add left wall
     for line in message.splitlines():
         wrapped += str(f'|| {line}' + '\n')
 
-    _div = f"{_div}---"
-    wrapped += f"{_div}\n"
+    # Add bottom divider (3 extra dashes to match length with top divider and packet number.
+    # ToDo:
+    #     Will need to figure out how to add more dashes for packet numbers 10+
+    _div_addition = '-' * div_offset
+    wrapped += f"{_div}{_div_addition}\n"
 
+    # Return wrapped message to caller.
     return wrapped
 
 
@@ -257,12 +306,12 @@ def listener():
         try:
             udp_init(port=recv_port)
             okay = True
-        except:
-            print(f'Port {recv_port} is already open by another application. \
-    Aborting.')
+        except OSError as e:
+            statement = f'Port {recv_port} is already open by another application. Aborting.'
             okay = False
-            sys.exit()
-        while okay:
+            raise PortInUseError(statement) from e
+
+        while okay: 
             data, addr = receive()
             beep()
             batt_data = data[4:40]
@@ -270,6 +319,7 @@ def listener():
             received_crc = batt_data[35]
             calculated_crc = calc(batt_data_first35)
             msg = ""
+
             if received_crc == calculated_crc:
                 (voltage, current, power, high_cell, low_cell, difference,
                  percent, temperatures) = interpret(batt_data)
@@ -288,21 +338,12 @@ def listener():
                 msg += f"{str(round(power, 1))}W"
                 msg += f"\nMessage Hex: {batt_data_hex}"
 
-                # msg = str(f"From: {addr[0]}:{addr[1]} To port: {recv_port}\
-                #             \n{batt_data_hex}\
-                #             \n{str(percent)}% \
-                #             {str(round(avg_temp, 2))}°C \
-                #             {str(round((avg_temp * 1.8) + 32.0, 1))}°F \
-                #             lo {str(round(low_cell, 3))}V \
-                #             {str(round(voltage, 3))}V \
-                #             hi {str(round(high_cell, 3))}V \
-                #             {str(round(current, 3))}A \
-                #             {str(round(power, 1))}W")
             else:
                 msg = str(
                     f"From: {addr[0]}:{addr[1]} To port: {recv_port} \\\x1fBytes: {len(data)} Data packet received:\\\x1f\n{data.hex()}"
                 )
 
+            # Whatever the output, wrap it. (always good advice)
             buffer = wrap_message(msg)
 
     end()
@@ -330,7 +371,7 @@ def safe_exit(window, values=None):
 
 
 def main():
-    global buffer, muted, copy_on_exit
+    global buffer, muted, copy_on_exit, div_offset
 
     # Configure our window, first a title for it
 
@@ -351,7 +392,7 @@ def main():
     listen.start()
 
     # Let's set up a cache variable so our GUI will have a reference to decide
-    # when one read is different from it's last
+    # when one read is different from its last
     last_read = None
 
     counter = 0
@@ -396,7 +437,12 @@ def main():
         if buffer != last_read:
             counter += 1
             count = Numerical(counter)
-            out = f"[{count.commify()}] {buffer} "
+            packet_count = f"[{count.commify()}]"
+
+            if len(packet_count) != div_offset:
+                div_offset = len(packet_count)
+
+            out = f"{packet_count} {buffer} "
             win['MULTILINE'].print(out + '\n')
             last_read = buffer
 
@@ -408,4 +454,9 @@ def main():
 
 
 if __name__ == "__main__":
+    for i in range(1000):
+        psg.popup_animated(SPLASH_GIF)
+
+    psg.popup_animated(None)
+
     main()

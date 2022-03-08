@@ -24,8 +24,17 @@ class EmptyBufferError(Exception):
         Exception.__init__(self, message)
 
 
-def test_exception():
-    raise EmptyBufferError(__name__)
+class PortInUseError(Exception):
+    """
+    Raised when an attempt to connect to the socket fails due to the port already being in-use.
+    """
 
+    default_msg = "Illegal port-binding attempt. Port in use!"
 
+    def __init__(self, message=default_msg):
+        if message != self.default_msg:
+            msg = self.default_msg + f"\n\nSome more information from the caller: {message}"
+            message = msg
+
+        Exception.__init__(self, message)
 
